@@ -1,126 +1,111 @@
-import React, {useEffect, useRef, useState} from 'react';
-import {
-  StyleSheet,
-  View,
-  Text,
-  ActivityIndicator,
-  TouchableOpacity,
-  Linking,
-} from 'react-native';
+import React, {useEffect, useState} from 'react';
+import {StyleSheet, View, Text, TouchableOpacity} from 'react-native';
 import {
   Camera,
   useCameraDevice,
   useCameraPermission,
+  useFrameProcessor,
 } from 'react-native-vision-camera';
-import {useIsFocused} from '@react-navigation/native'; // 화면 포커스 감지용
+import {useFaceDetector} from 'react-native-vision-camera-face-detector';
+import {Worklets} from 'react-native-worklets-core'; // 여기를 주목하세요!
 
 const CameraComponent = () => {
-  // 1. 전면 카메라 기기 가져오기 ('front')
   const device = useCameraDevice('front');
-
-  // 2. 권한 상태 관리
   const {hasPermission, requestPermission} = useCameraPermission();
+  const [isFaceDetected, setIsFaceDetected] = useState(false);
 
-  // 3. 네비게이션 포커스 상태 (화면을 벗어나면 카메라 끄기 위해)
-  const isFocused = useIsFocused();
+  // 얼굴 인식 설정
+  const {detectFaces} = useFaceDetector({
+    performanceMode: 'fast',
+    contourMode: 'none',
+    landmarkMode: 'none',
+    classificationMode: 'none',
+  });
 
-  // 4. 카메라 제어용 Ref (사진 촬영 시 필요)
-  const camera = useRef<Camera>(null);
-
-  // 초기 권한 요청
   useEffect(() => {
-    if (!hasPermission) {
-      requestPermission();
-    }
-  }, [hasPermission, requestPermission]);
+    if (!hasPermission) requestPermission();
+  }, [hasPermission]);
 
-  // 권한이 없을 때 보여줄 화면
-  if (!hasPermission) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.text}>카메라 권한이 필요합니다.</Text>
-        <TouchableOpacity onPress={() => Linking.openSettings()}>
-          <Text style={styles.link}>설정으로 이동</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+  // 1. JS 스레드 함수 생성 (Worklets.createRunOnJS 사용)
+  // 'detected' 옆에 ': boolean'을 붙여서 빨간 줄 에러를 해결했습니다.
+  const handleFaceDetectedJS = Worklets.createRunOnJS((detected: boolean) => {
+    setIsFaceDetected(detected);
+  });
 
-  // 기기가 없을 때 (예: 시뮬레이터)
-  if (device == null) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.text}>카메라 장치를 찾을 수 없습니다.</Text>
-        <Text style={styles.subText}>
-          (시뮬레이터에서는 작동하지 않습니다. 실물 기기로 테스트하세요.)
-        </Text>
-      </View>
-    );
-  }
+  // 2. 프레임 프로세서
+  const frameProcessor = useFrameProcessor(
+    frame => {
+      'worklet';
+
+      // 이미 인식된 상태라면 연산 건너뛰기 (성능 최적화)
+      // 주의: Worklet 안에서는 JS State인 isFaceDetected를 직접 읽지 못할 수 있으므로
+      // 여기서는 단순히 얼굴이 있는지만 판단해서 신호를 보냅니다.
+
+      const faces = detectFaces(frame);
+
+      if (faces.length > 0) {
+        // 3. 위에서 만든 JS 함수를 "직접" 호출합니다. (runOnJS 불필요)
+        handleFaceDetectedJS(true);
+      }
+    },
+    // 의존성 배열에는 Worklet 함수만 넣으면 됩니다.
+    [],
+  );
+
+  const resetDetection = () => {
+    setIsFaceDetected(false);
+  };
+
+  if (!hasPermission) return <Text>권한이 필요합니다.</Text>;
+  if (device == null) return <Text>카메라가 없습니다.</Text>;
 
   return (
     <View style={styles.container}>
       <Camera
-        ref={camera}
-        style={StyleSheet.absoluteFill} // 전체 화면 채우기
+        style={StyleSheet.absoluteFill}
         device={device}
-        isActive={isFocused} // 화면이 보일 때만 카메라 활성화
-        photo={true} // 사진 촬영 기능 활성화
+        // 얼굴 인식되면 카메라 프리뷰 일시정지
+        isActive={!isFaceDetected}
+        frameProcessor={frameProcessor}
+        pixelFormat="yuv"
       />
 
-      {/* 촬영 버튼 UI 예시 */}
-      <View style={styles.buttonContainer}>
-        <TouchableOpacity
-          style={styles.captureButton}
-          onPress={async () => {
-            try {
-              const photo = await camera.current?.takePhoto();
-              console.log('찍은 사진 경로:', photo?.path);
-            } catch (e) {
-              console.error('촬영 실패:', e);
-            }
-          }}
-        />
-      </View>
+      {isFaceDetected && (
+        <View style={styles.overlay}>
+          <Text style={styles.alertText}>🎉 얼굴 인식됨!</Text>
+          <Text style={styles.subText}>촬영이 중단되었습니다.</Text>
+          <TouchableOpacity style={styles.button} onPress={resetDetection}>
+            <Text style={styles.buttonText}>다시 시작하기</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: 'black',
+  container: {flex: 1, backgroundColor: 'black'},
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 1,
   },
-  text: {
-    color: 'white',
-    fontSize: 18,
+  alertText: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#4CAF50',
     marginBottom: 10,
   },
-  subText: {
-    color: '#aaa',
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  link: {
-    color: '#007AFF',
-    fontSize: 18,
-    textDecorationLine: 'underline',
-  },
-  buttonContainer: {
-    position: 'absolute',
-    bottom: 50,
-    alignSelf: 'center',
-  },
-  captureButton: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
+  subText: {fontSize: 16, color: 'white', marginBottom: 30},
+  button: {
     backgroundColor: 'white',
-    borderWidth: 4,
-    borderColor: 'gray',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
   },
+  buttonText: {fontSize: 16, fontWeight: 'bold', color: 'black'},
 });
 
 export default CameraComponent;
