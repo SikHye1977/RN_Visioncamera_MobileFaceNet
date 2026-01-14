@@ -41,6 +41,7 @@ Property not found : \_Worklet 에러 해결을 위한 참고 : https://github.c
 ## 사용 모델
 
 참고 : https://modelnova.ai/models/details/mobile-facenet-face-recognition/visualize
+
 패키지
 
 - npm install react-native-fast-tflite
