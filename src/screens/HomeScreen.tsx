@@ -17,9 +17,9 @@ function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1, // 화면 전체를 쓰겠다는 의미 (필수)
-    justifyContent: 'center', // 세로 중앙 정렬
-    alignItems: 'center', // 가로 중앙 정렬
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
     backgroundColor: '#fff',
   },
   title: {fontSize: 28, fontWeight: 'bold', marginBottom: 10},

@@ -14,13 +14,15 @@
     "@react-navigation/stack": "^7.6.13",
     "react": "19.0.0",
     "react-native": "0.79.5",
+    "react-native-fast-tflite": "^1.6.1",
     "react-native-gesture-handler": "^2.30.0",
     "react-native-reanimated": "^3.17.4",
     "react-native-safe-area-context": "^5.6.2",
     "react-native-screens": "^4.14.1",
     "react-native-vision-camera": "^4.7.2",
     "react-native-vision-camera-face-detector": "^1.10.1",
-    "react-native-worklets-core": "^1.6.2"
+    "react-native-worklets-core": "^1.6.2",
+    "vision-camera-resize-plugin": "^3.2.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
