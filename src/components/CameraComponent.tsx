@@ -124,6 +124,9 @@ const CameraComponent = () => {
             .map((v: number) => v.toFixed(3))
             .join(', ');
 
+          // embedding vector 확인용 로그
+          console.log(embedding);
+
           // 키가 추출되었으면 즉시 JS로 보내고 멈춤 요청
           handleCaptureJS(faces, frame.width, frame.height, extractedKey);
         }
