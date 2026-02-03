@@ -18,6 +18,10 @@ import {Worklets} from 'react-native-worklets-core';
 import {useTensorflowModel} from 'react-native-fast-tflite';
 import {useResizePlugin} from 'vision-camera-resize-plugin';
 
+// ✨ [1] Generator 함수 임포트 (경로를 본인 프로젝트에 맞게 수정하세요)
+// 예: src/utils/FE_Generator.ts 에 있다면:
+import {Generator} from '../utils/Fuzzy_Extractor/FE_Generator';
+
 // 🎛️ UI 보정값
 const VERTICAL_OFFSET = -50;
 const HORIZONTAL_OFFSET = 0;
@@ -27,7 +31,7 @@ const CameraComponent = () => {
   const {hasPermission, requestPermission} = useCameraPermission();
   const {width: windowWidth, height: windowHeight} = useWindowDimensions();
 
-  // 1. TFLite 모델 로드
+  // TFLite 모델 로드
   const objectDetection = useTensorflowModel(
     require('../assets/MobileFaceNet_new_latest_int8.tflite'),
   );
@@ -36,22 +40,25 @@ const CameraComponent = () => {
 
   const {resize} = useResizePlugin();
 
-  // 2. 상태 관리
   const [isCaptured, setIsCaptured] = useState(false);
 
-  // ✨ 변경: binaryCode 필드 추가
+  // ✨ [2] State 확장: 생성된 키와 헬퍼 데이터를 저장할 필드 추가
   const [faceData, setFaceData] = useState<{
     faces: Face[];
     frameWidth: number;
     frameHeight: number;
     keyString: string;
-    binaryCode: string; // 이진화된 코드 저장
+    binaryCode: string;
+    helperData: string; // ✨ 추가됨 (P)
+    finalKey: string; // ✨ 추가됨 (R)
   }>({
     faces: [],
     frameWidth: 0,
     frameHeight: 0,
     keyString: '',
     binaryCode: '',
+    helperData: '',
+    finalKey: '',
   });
 
   const {detectFaces} = useFaceDetector({
@@ -65,35 +72,49 @@ const CameraComponent = () => {
     if (!hasPermission) requestPermission();
   }, [hasPermission]);
 
-  // 3. 데이터 처리 및 캡처 확정 (JS 스레드)
-  // ✨ 변경: binary 인자 추가
+  // ✨ [3] JS 핸들러 수정: Generator 호출 로직 추가
   const handleCaptureJS = Worklets.createRunOnJS(
     (faces: Face[], w: number, h: number, key: string, binary: string) => {
-      // 이미 캡처된 상태라면 무시
       if (key && key.length > 0) {
+        // --- Fuzzy Extractor 실행 ---
+        console.log('Generating Fuzzy Key...');
+        let generatedHelper = '';
+        let generatedKey = '';
+
+        try {
+          // 아까 만든 Generator 함수 호출
+          const result = Generator(binary);
+          generatedHelper = result.helperData;
+          generatedKey = result.key;
+          console.log('Key Generation Success!');
+        } catch (e) {
+          console.error('Key Gen Failed:', e);
+        }
+        // ---------------------------
+
         setFaceData({
           faces,
           frameWidth: w,
           frameHeight: h,
           keyString: key,
-          binaryCode: binary, // 이진 코드 저장
+          binaryCode: binary,
+          helperData: generatedHelper, // 결과 저장
+          finalKey: generatedKey, // 결과 저장
         });
-        setIsCaptured(true); // 카메라 정지
+
+        setIsCaptured(true);
       }
     },
   );
 
-  // 4. 프레임 프로세서
+  // 프레임 프로세서 (기존과 동일)
   const frameProcessor = useFrameProcessor(
     frame => {
       'worklet';
-
       const faces = detectFaces(frame);
 
       if (faces.length > 0 && model != null) {
         const face = faces[0];
-
-        // 좌표 보정
         const x = Math.max(0, face.bounds.x);
         const y = Math.max(0, face.bounds.y);
         const width = Math.min(face.bounds.width, frame.width - x);
@@ -101,47 +122,29 @@ const CameraComponent = () => {
 
         if (width <= 0 || height <= 0) return;
 
-        // 리사이즈
         const resized = resize(frame, {
-          scale: {
-            width: 112,
-            height: 112,
-          },
+          scale: {width: 112, height: 112},
           pixelFormat: 'rgb',
           dataType: 'uint8',
-          crop: {
-            x: x,
-            y: y,
-            width: width,
-            height: height,
-          },
+          crop: {x, y, width, height},
         });
 
-        // uint8 -> int8 변환 (MobileFaceNet 입력 정규화)
         const inputData = new Int8Array(resized.length);
         for (let i = 0; i < resized.length; i++) {
           inputData[i] = resized[i] - 128;
         }
 
-        // D. 모델 실행
         const output = model.runSync([inputData]);
-        const embedding = output[0]; // Int8Array or Float32Array
+        const embedding = output[0];
 
-        // E. 키 추출 및 이진화
         if (embedding) {
-          // 1) 화면 표시용 앞 5자리 (기존 로직 유지)
-          // TypedArray는 바로 map을 쓸 수 없거나 worklet 환경 특성을 고려하여 루프로 처리할 수도 있음
-          // 여기선 간단히 Array.from 사용 (성능이 중요하다면 직접 루프 권장)
           const vectorValues = Array.from(embedding as any) as number[];
           const extractedKey = vectorValues
             .slice(0, 5)
             .map((v: number) => v.toFixed(3))
             .join(', ');
 
-          // ✨ 2) 이진화 (Binarization) 로직 추가
-          // Threshold: 0 (0보다 크거나 같으면 1, 아니면 0)
           let binaryStr = '';
-          // embedding은 TypedArray이므로 length 프로퍼티가 있습니다.
           // @ts-ignore
           const len = embedding.length;
           for (let i = 0; i < len; i++) {
@@ -150,10 +153,6 @@ const CameraComponent = () => {
             binaryStr += val >= 0 ? '1' : '0';
           }
 
-          console.log(`Binary Length: ${binaryStr.length}`); // 128이어야 함]
-          console.log(`Binary String: ${binaryStr}`);
-
-          // JS 스레드로 전달
           handleCaptureJS(
             faces,
             frame.width,
@@ -175,6 +174,8 @@ const CameraComponent = () => {
       frameHeight: 0,
       keyString: '',
       binaryCode: '',
+      helperData: '',
+      finalKey: '',
     });
   };
 
@@ -192,8 +193,9 @@ const CameraComponent = () => {
         resizeMode="cover"
       />
 
-      {/* 얼굴 박스 그리기 로직 (기존과 동일) */}
+      {/* 얼굴 박스 (기존 유지) */}
       {faceData.faces.map((face, index) => {
+        // ... (기존 박스 그리기 코드 생략 - 위와 동일) ...
         const {bounds} = face;
         const {frameWidth, frameHeight} = faceData;
         if (frameWidth === 0 || frameHeight === 0) return null;
@@ -235,23 +237,37 @@ const CameraComponent = () => {
         );
       })}
 
+      {/* ✨ [4] UI 수정: Helper Data와 Key 표시 */}
       <View style={styles.infoOverlay}>
         <Text style={styles.infoTitle}>
-          {isCaptured ? '✅ 인식 완료' : '👤 얼굴 인식 중...'}
+          {isCaptured ? '🔐 키 생성 완료' : '👤 얼굴 인식 중...'}
         </Text>
 
         {isCaptured && (
           <View style={{width: '100%', alignItems: 'center'}}>
-            <Text style={styles.infoLabel}>미리보기 (Vector):</Text>
-            <Text style={styles.infoValue}>[{faceData.keyString}, ...]</Text>
-
-            <Text style={styles.infoLabel}>생성된 이진 코드 (Binary):</Text>
-            <ScrollView
-              style={styles.binaryScroll}
-              horizontal={false}
-              nestedScrollEnabled={true}>
+            {/* 1. 이진 코드 */}
+            <Text style={styles.infoLabel}>Raw Binary Code:</Text>
+            <ScrollView style={styles.binaryScroll} nestedScrollEnabled={true}>
               <Text style={styles.binaryValue}>{faceData.binaryCode}</Text>
             </ScrollView>
+
+            {/* 2. Helper Data (P) */}
+            <Text style={styles.infoLabel}>Helper Data (저장용 P):</Text>
+            <View style={styles.resultBox}>
+              <Text style={styles.resultValue} numberOfLines={2}>
+                {faceData.helperData}
+              </Text>
+            </View>
+
+            {/* 3. Final Key (R) */}
+            <Text style={styles.infoLabel}>Final Secret Key (생성된 R):</Text>
+            <View style={[styles.resultBox, {borderColor: '#FFD700'}]}>
+              <Text
+                style={[styles.resultValue, {color: '#FFD700'}]}
+                numberOfLines={2}>
+                {faceData.finalKey}
+              </Text>
+            </View>
 
             <TouchableOpacity onPress={resetScan} style={styles.retryButton}>
               <Text style={styles.retryText}>🔄 다시 스캔하기</Text>
@@ -267,14 +283,14 @@ const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: 'black'},
   infoOverlay: {
     position: 'absolute',
-    bottom: 50,
+    bottom: 40,
     left: 20,
     right: 20,
-    backgroundColor: 'rgba(0,0,0,0.85)',
+    backgroundColor: 'rgba(0,0,0,0.9)', // 가독성을 위해 배경 더 어둡게
     padding: 20,
     borderRadius: 16,
     alignItems: 'center',
-    maxHeight: 300, // 오버레이 최대 높이 제한
+    maxHeight: 500, // 높이 늘림
   },
   infoTitle: {
     color: 'white',
@@ -285,8 +301,10 @@ const styles = StyleSheet.create({
   infoLabel: {
     color: '#aaa',
     fontSize: 12,
-    marginTop: 5,
+    marginTop: 8,
+    marginBottom: 2,
     alignSelf: 'flex-start',
+    fontWeight: '600',
   },
   infoValue: {
     color: '#4CAF50',
@@ -297,20 +315,35 @@ const styles = StyleSheet.create({
   },
   binaryScroll: {
     width: '100%',
-    height: 60, // 스크롤 영역 높이
-    backgroundColor: '#222',
+    height: 50,
+    backgroundColor: '#111',
     borderRadius: 8,
-    marginVertical: 10,
+    marginBottom: 5,
     padding: 5,
   },
   binaryValue: {
-    color: '#00FFFF', // Cyan color for binary
-    fontSize: 12,
-    letterSpacing: 1, // 비트 간격 넓히기
-    fontFamily: 'Courier', // 고정폭 글꼴 권장 (기기에 따라 다를 수 있음)
+    color: '#00FFFF',
+    fontSize: 10,
+    fontFamily: 'Courier',
+  },
+  // ✨ 결과 박스 스타일 추가
+  resultBox: {
+    width: '100%',
+    padding: 10,
+    backgroundColor: '#222',
+    borderWidth: 1,
+    borderColor: '#555',
+    borderRadius: 8,
+    marginBottom: 5,
+  },
+  resultValue: {
+    color: '#fff',
+    fontSize: 11,
+    fontFamily: 'Courier',
+    textAlign: 'center',
   },
   retryButton: {
-    marginTop: 10,
+    marginTop: 15,
     backgroundColor: '#2196F3',
     paddingVertical: 12,
     paddingHorizontal: 30,
