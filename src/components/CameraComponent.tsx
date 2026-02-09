@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useState, useCallback} from 'react';
 import {
   StyleSheet,
   View,
@@ -6,6 +6,8 @@ import {
   useWindowDimensions,
   TouchableOpacity,
   ScrollView,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import {
   Camera,
@@ -17,16 +19,22 @@ import {Face, useFaceDetector} from 'react-native-vision-camera-face-detector';
 import {Worklets} from 'react-native-worklets-core';
 import {useTensorflowModel} from 'react-native-fast-tflite';
 import {useResizePlugin} from 'vision-camera-resize-plugin';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {useNavigation, useRoute, useIsFocused} from '@react-navigation/native';
 
-// ✨ [1] Generator 함수 임포트 (경로를 본인 프로젝트에 맞게 수정하세요)
-// 예: src/utils/FE_Generator.ts 에 있다면:
+// 유틸리티 임포트
 import {Generator} from '../utils/Fuzzy_Extractor/FE_Generator';
+import {Reproducer} from '../utils/Fuzzy_Extractor/FE_Reproducer';
 
-// 🎛️ UI 보정값
 const VERTICAL_OFFSET = -50;
 const HORIZONTAL_OFFSET = 0;
 
 const CameraComponent = () => {
+  const navigation = useNavigation<any>();
+  const route = useRoute<any>();
+  const isFocused = useIsFocused();
+  const {mode} = route.params;
+
   const device = useCameraDevice('front');
   const {hasPermission, requestPermission} = useCameraPermission();
   const {width: windowWidth, height: windowHeight} = useWindowDimensions();
@@ -37,25 +45,24 @@ const CameraComponent = () => {
   );
   const model =
     objectDetection.state === 'loaded' ? objectDetection.model : undefined;
-
   const {resize} = useResizePlugin();
 
+  // 상태 관리
   const [isCaptured, setIsCaptured] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isCameraActive, setIsCameraActive] = useState(false); // 카메라 하드웨어 활성화 지연용
 
-  // ✨ [2] State 확장: 생성된 키와 헬퍼 데이터를 저장할 필드 추가
   const [faceData, setFaceData] = useState<{
     faces: Face[];
     frameWidth: number;
     frameHeight: number;
-    keyString: string;
     binaryCode: string;
-    helperData: string; // ✨ 추가됨 (P)
-    finalKey: string; // ✨ 추가됨 (R)
+    helperData: string;
+    finalKey: string;
   }>({
     faces: [],
     frameWidth: 0,
     frameHeight: 0,
-    keyString: '',
     binaryCode: '',
     helperData: '',
     finalKey: '',
@@ -68,59 +75,95 @@ const CameraComponent = () => {
     classificationMode: 'none',
   });
 
+  const resetScan = useCallback(() => {
+    setIsCaptured(false);
+    setIsProcessing(false);
+    setFaceData({
+      faces: [],
+      frameWidth: 0,
+      frameHeight: 0,
+      binaryCode: '',
+      helperData: '',
+      finalKey: '',
+    });
+  }, []);
+
+  // ✨ setTimeout 부분의 이상한 문자를 수정하고 로직을 보강했습니다.
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (isFocused) {
+      resetScan();
+      // 페이지 전환 시 카메라 리소스 충돌을 막기 위해 300ms 뒤에 활성화
+      timer = setTimeout(() => {
+        setIsCameraActive(true);
+      }, 300);
+    } else {
+      setIsCameraActive(false);
+      setIsProcessing(false);
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [isFocused, resetScan]);
+
   useEffect(() => {
     if (!hasPermission) requestPermission();
   }, [hasPermission]);
 
-  // ✨ [3] JS 핸들러 수정: Generator 호출 로직 추가
   const handleCaptureJS = Worklets.createRunOnJS(
-    (faces: Face[], w: number, h: number, key: string, binary: string) => {
-      if (key && key.length > 0) {
-        // --- Fuzzy Extractor 실행 ---
-        console.log('Generating Fuzzy Key...');
-        let generatedHelper = '';
-        let generatedKey = '';
+    async (faces: Face[], w: number, h: number, binary: string) => {
+      if (isCaptured || isProcessing) return;
+      setIsProcessing(true);
 
-        try {
-          // 아까 만든 Generator 함수 호출
-          const result = Generator(binary);
-          generatedHelper = result.helperData;
-          generatedKey = result.key;
-          console.log('Key Generation Success!');
-        } catch (e) {
-          console.error('Key Gen Failed:', e);
+      try {
+        if (mode === 'GENERATE') {
+          const result = await Generator(binary);
+          setFaceData({
+            faces,
+            frameWidth: w,
+            frameHeight: h,
+            binaryCode: binary,
+            helperData: result.helperData,
+            finalKey: result.key,
+          });
+          await AsyncStorage.setItem('@helper_data', result.helperData);
+          await AsyncStorage.setItem('@registered_key', result.key);
+        } else {
+          const savedP = await AsyncStorage.getItem('@helper_data');
+          if (!savedP) {
+            Alert.alert('에러', '등록된 데이터가 없습니다.');
+            navigation.navigate('Home');
+            return;
+          }
+          const recoveredKey = await Reproducer(binary, savedP);
+          setFaceData({
+            faces,
+            frameWidth: w,
+            frameHeight: h,
+            binaryCode: binary,
+            helperData: savedP,
+            finalKey: recoveredKey,
+          });
         }
-        // ---------------------------
-
-        setFaceData({
-          faces,
-          frameWidth: w,
-          frameHeight: h,
-          keyString: key,
-          binaryCode: binary,
-          helperData: generatedHelper, // 결과 저장
-          finalKey: generatedKey, // 결과 저장
-        });
-
         setIsCaptured(true);
+      } catch (e) {
+        console.error('FE Process Error:', e);
+        Alert.alert('실패', '처리에 실패했습니다.');
+        setIsProcessing(false);
       }
     },
   );
 
-  // 프레임 프로세서 (기존과 동일)
   const frameProcessor = useFrameProcessor(
     frame => {
       'worklet';
+      if (isCaptured || isProcessing) return;
+
       const faces = detectFaces(frame);
 
       if (faces.length > 0 && model != null) {
         const face = faces[0];
-        const x = Math.max(0, face.bounds.x);
-        const y = Math.max(0, face.bounds.y);
-        const width = Math.min(face.bounds.width, frame.width - x);
-        const height = Math.min(face.bounds.height, frame.height - y);
-
-        if (width <= 0 || height <= 0) return;
+        const {x, y, width, height} = face.bounds;
 
         const resized = resize(frame, {
           scale: {width: 112, height: 112},
@@ -138,139 +181,122 @@ const CameraComponent = () => {
         const embedding = output[0];
 
         if (embedding) {
-          const vectorValues = Array.from(embedding as any) as number[];
-          const extractedKey = vectorValues
-            .slice(0, 5)
-            .map((v: number) => v.toFixed(3))
-            .join(', ');
-
           let binaryStr = '';
-          // @ts-ignore
-          const len = embedding.length;
-          for (let i = 0; i < len; i++) {
-            // @ts-ignore
-            const val = embedding[i];
-            binaryStr += val >= 0 ? '1' : '0';
+          for (let i = 0; i < embedding.length; i++) {
+            binaryStr += embedding[i] >= 0 ? '1' : '0';
           }
-
-          handleCaptureJS(
-            faces,
-            frame.width,
-            frame.height,
-            extractedKey,
-            binaryStr,
-          );
+          handleCaptureJS(faces, frame.width, frame.height, binaryStr);
         }
       }
     },
-    [handleCaptureJS, model, resize],
+    [handleCaptureJS, model, resize, isCaptured, isProcessing],
   );
 
-  const resetScan = () => {
-    setIsCaptured(false);
-    setFaceData({
-      faces: [],
-      frameWidth: 0,
-      frameHeight: 0,
-      keyString: '',
-      binaryCode: '',
-      helperData: '',
-      finalKey: '',
-    });
-  };
-
-  if (!hasPermission) return <Text>권한이 필요합니다.</Text>;
-  if (device == null) return <Text>카메라가 없습니다.</Text>;
+  if (!hasPermission)
+    return (
+      <View style={styles.center}>
+        <Text>권한 대기 중...</Text>
+      </View>
+    );
+  if (device == null)
+    return (
+      <View style={styles.center}>
+        <Text>카메라를 찾을 수 없습니다.</Text>
+      </View>
+    );
 
   return (
     <View style={styles.container}>
       <Camera
         style={StyleSheet.absoluteFill}
         device={device}
-        isActive={!isCaptured}
+        isActive={isFocused && isCameraActive && !isCaptured}
         frameProcessor={frameProcessor}
         pixelFormat="yuv"
         resizeMode="cover"
       />
 
-      {/* 얼굴 박스 (기존 유지) */}
-      {faceData.faces.map((face, index) => {
-        // ... (기존 박스 그리기 코드 생략 - 위와 동일) ...
-        const {bounds} = face;
-        const {frameWidth, frameHeight} = faceData;
-        if (frameWidth === 0 || frameHeight === 0) return null;
+      {/* 가이드 박스 */}
+      {!isCaptured &&
+        faceData.faces.map((face, index) => {
+          const {bounds} = face;
+          const {frameWidth, frameHeight} = faceData;
+          if (frameWidth === 0 || frameHeight === 0) return null;
 
-        const sensorRotatedWidth = frameHeight;
-        const sensorRotatedHeight = frameWidth;
-        const scaleX = windowWidth / sensorRotatedWidth;
-        const scaleY = windowHeight / sensorRotatedHeight;
-        const scale = Math.max(scaleX, scaleY);
-        const scaledSensorWidth = sensorRotatedWidth * scale;
-        const offsetX = (scaledSensorWidth - windowWidth) / 2;
-        const offsetY = (sensorRotatedHeight * scale - windowHeight) / 2;
+          const scale = Math.max(
+            windowWidth / frameHeight,
+            windowHeight / frameWidth,
+          );
+          let finalX =
+            bounds.y * scale - (frameHeight * scale - windowWidth) / 2;
+          let finalY =
+            bounds.x * scale - (frameWidth * scale - windowHeight) / 2;
 
-        let finalX = bounds.y * scale - offsetX;
-        let finalY = bounds.x * scale - offsetY;
-        let finalWidth = bounds.height * scale;
-        let finalHeight = bounds.width * scale;
+          if (device.position === 'front')
+            finalX = windowWidth - finalX - bounds.height * scale;
 
-        if (device.position === 'front') {
-          finalX = windowWidth - finalX - finalWidth;
-        }
-        finalY += VERTICAL_OFFSET;
-        finalX += HORIZONTAL_OFFSET;
+          return (
+            <View
+              key={index}
+              style={[
+                styles.faceBox,
+                {
+                  left: finalX + HORIZONTAL_OFFSET,
+                  top: finalY + VERTICAL_OFFSET,
+                  width: bounds.height * scale,
+                  height: bounds.width * scale,
+                },
+              ]}
+            />
+          );
+        })}
 
-        return (
-          <View
-            key={index}
-            style={{
-              position: 'absolute',
-              borderColor: isCaptured ? '#00FFFF' : '#00FF00',
-              borderWidth: 3,
-              left: finalX,
-              top: finalY,
-              width: finalWidth,
-              height: finalHeight,
-              zIndex: 10,
-            }}
-          />
-        );
-      })}
-
-      {/* ✨ [4] UI 수정: Helper Data와 Key 표시 */}
       <View style={styles.infoOverlay}>
         <Text style={styles.infoTitle}>
-          {isCaptured ? '🔐 키 생성 완료' : '👤 얼굴 인식 중...'}
+          {isCaptured
+            ? mode === 'GENERATE'
+              ? '🔐 생성 완료'
+              : '🔓 복구 완료'
+            : isProcessing
+            ? '⚙️ 연산 중...'
+            : '👤 얼굴을 인식해주세요'}
         </Text>
+
+        {isProcessing && !isCaptured && (
+          <ActivityIndicator
+            size="large"
+            color="#00FF00"
+            style={{margin: 10}}
+          />
+        )}
 
         {isCaptured && (
           <View style={{width: '100%', alignItems: 'center'}}>
-            {/* 1. 이진 코드 */}
-            <Text style={styles.infoLabel}>Raw Binary Code:</Text>
-            <ScrollView style={styles.binaryScroll} nestedScrollEnabled={true}>
-              <Text style={styles.binaryValue}>{faceData.binaryCode}</Text>
-            </ScrollView>
-
-            {/* 2. Helper Data (P) */}
-            <Text style={styles.infoLabel}>Helper Data (저장용 P):</Text>
+            <Text style={styles.infoLabel}>Helper Data (P):</Text>
             <View style={styles.resultBox}>
-              <Text style={styles.resultValue} numberOfLines={2}>
-                {faceData.helperData}
-              </Text>
+              <Text style={styles.resultValue}>{faceData.helperData}</Text>
             </View>
 
-            {/* 3. Final Key (R) */}
-            <Text style={styles.infoLabel}>Final Secret Key (생성된 R):</Text>
+            <Text style={styles.infoLabel}>
+              {mode === 'GENERATE' ? '원본 키 (R):' : '복구된 키 (R):'}
+            </Text>
             <View style={[styles.resultBox, {borderColor: '#FFD700'}]}>
-              <Text
-                style={[styles.resultValue, {color: '#FFD700'}]}
-                numberOfLines={2}>
+              <Text style={[styles.resultValue, {color: '#FFD700'}]}>
                 {faceData.finalKey}
               </Text>
             </View>
 
             <TouchableOpacity onPress={resetScan} style={styles.retryButton}>
-              <Text style={styles.retryText}>🔄 다시 스캔하기</Text>
+              <Text style={styles.retryText}>🔄 다시 시도</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Home')}
+              style={[
+                styles.retryButton,
+                {backgroundColor: '#444', marginTop: 10},
+              ]}>
+              <Text style={styles.retryText}>🏠 홈으로</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -281,16 +307,22 @@ const CameraComponent = () => {
 
 const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: 'black'},
+  center: {flex: 1, justifyContent: 'center', alignItems: 'center'},
+  faceBox: {
+    position: 'absolute',
+    borderColor: '#00FF00',
+    borderWidth: 3,
+    zIndex: 10,
+  },
   infoOverlay: {
     position: 'absolute',
     bottom: 40,
     left: 20,
     right: 20,
-    backgroundColor: 'rgba(0,0,0,0.9)', // 가독성을 위해 배경 더 어둡게
+    backgroundColor: 'rgba(0,0,0,0.85)',
     padding: 20,
     borderRadius: 16,
     alignItems: 'center',
-    maxHeight: 500, // 높이 늘림
   },
   infoTitle: {
     color: 'white',
@@ -301,61 +333,33 @@ const styles = StyleSheet.create({
   infoLabel: {
     color: '#aaa',
     fontSize: 12,
-    marginTop: 8,
-    marginBottom: 2,
+    marginTop: 10,
     alignSelf: 'flex-start',
-    fontWeight: '600',
   },
-  infoValue: {
-    color: '#4CAF50',
-    fontSize: 16,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 5,
-  },
-  binaryScroll: {
-    width: '100%',
-    height: 50,
-    backgroundColor: '#111',
-    borderRadius: 8,
-    marginBottom: 5,
-    padding: 5,
-  },
-  binaryValue: {
-    color: '#00FFFF',
-    fontSize: 10,
-    fontFamily: 'Courier',
-  },
-  // ✨ 결과 박스 스타일 추가
   resultBox: {
     width: '100%',
     padding: 10,
     backgroundColor: '#222',
+    borderRadius: 8,
+    marginTop: 5,
     borderWidth: 1,
     borderColor: '#555',
-    borderRadius: 8,
-    marginBottom: 5,
   },
   resultValue: {
     color: '#fff',
     fontSize: 11,
-    fontFamily: 'Courier',
     textAlign: 'center',
+    fontFamily: 'monospace',
   },
   retryButton: {
-    marginTop: 15,
     backgroundColor: '#2196F3',
-    paddingVertical: 12,
-    paddingHorizontal: 30,
+    padding: 12,
     borderRadius: 8,
     width: '100%',
     alignItems: 'center',
+    marginTop: 15,
   },
-  retryText: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
+  retryText: {color: 'white', fontWeight: 'bold'},
 });
 
 export default CameraComponent;

@@ -101,7 +101,6 @@ std::vector<unsigned char> BCH::recover(const std::vector<unsigned char>& noisy_
             std::vector<int> T = sigma;
             int scale = gf_mul(d, gf_inv(b));
             
-            // ✨ [수정] 인덱스 범위 초과 방지 로직 강화
             for (int i = 0; i <= t; i++) {
                 if (i + m_val <= t && i < (int)old_sigma.size()) {
                     sigma[i + m_val] ^= gf_mul(scale, old_sigma[i]);
@@ -135,7 +134,6 @@ std::vector<unsigned char> BCH::recover(const std::vector<unsigned char>& noisy_
             int byte_idx = i / 8;
             int bit_offset = 7 - (i % 8);
             
-            // ✨ [수정] 벡터 범위 내에 있을 때만 비트 반전 수행
             if (byte_idx >= 0 && byte_idx < (int)recovered.size()) {
                 recovered[byte_idx] ^= (1 << bit_offset);
             }

@@ -86,6 +86,10 @@ module.exports = mergeConfig(defaultConfig, config);
 
 ### Generator
 
+입력값
+
+- 데이터 w
+
 다음 두가지로 구성됨
 
 - Secure Sketch
@@ -158,4 +162,73 @@ const binaryStringToBuffer = (str: string): Buffer => {
   }
   return Buffer.from(bytes);
 };
+```
+
+### Reproducer
+
+입력값
+
+- 노이즈가 낀 입력 데이터 w'
+- Helper Data H
+
+Reproducer는 Helper Data H를 Sketch s와 Seed x로 분해
+
+이후 작업은 다음 두가지로 구성됨
+
+- Secure Sketch Recovery
+  - 노이즈가 낀 입력 데이터 w'로부터 원본 데이터 w를 복구함
+- Strong Extractor
+  - Seed X를 이용해 Universal Hash 에서 특정 Hash함수 Hx를 뽑아냄
+  - Secure Sketch Recovery가 복구한 w를 Hx에 넣어 키 R 생성
+
+최종적으로 Reproducer는 키 R을 반환
+
+Reproducer 코드
+
+```ts
+export async function Reproducer(faceBinaryString: string, P: string) {
+  // 1. P(Helper Data) 분해 => s(Saved Syndrome), x(Salt/Seed)
+  const splitPoint = T_VALUE * 2 * 2;
+
+  const s_hex = P.substring(0, splitPoint);
+  const x_hex = P.substring(splitPoint);
+
+  // 2. Secure Sketch Recovery => 원본 w 복구
+  const w_recovered_hex = await Secure_Sketch_Recovery(faceBinaryString, s_hex);
+
+  // 3. Strong Extractor => 최종 키 R 추출
+  const R_recovered = Strong_Extractor(w_recovered_hex, x_hex);
+
+  return R_recovered;
+}
+```
+
+Secure Sketch Recovery 코드
+
+```ts
+export async function Secure_Sketch_Recovery(
+  faceBinaryString: string,
+  s_hex: string,
+) {
+  const saved_syndromes = hexToSyndromeArray(s_hex);
+
+  try {
+    const recovered_hex = await BCHModule.recover(
+      faceBinaryString,
+      saved_syndromes,
+    );
+    return recovered_hex;
+  } catch (e) {
+    console.error('복구 실패: 에러가 정정 범위를 벗어났습니다.', e);
+    throw e;
+  }
+}
+```
+
+Strong Generator 코드
+
+```ts
+export function Strong_Extractor(w_hex: string, x_hex: string) {
+  return CryptoJS.HmacSHA256(w_hex, x_hex).toString();
+}
 ```
