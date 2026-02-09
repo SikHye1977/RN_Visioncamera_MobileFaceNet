@@ -1,35 +1,44 @@
+import {NativeModules} from 'react-native';
 import {Buffer} from 'buffer';
 import CryptoJS from 'crypto-js';
-import {ReedSolomon} from '../misc/ReedSolomon';
 
-// Set Parameter
-const DATA_LEN = 16;
-const EC_LEN = 12; // Parity Length
+// 네이티브 모듈 import
+const {BCHModule} = NativeModules;
+
 const SEED_LEN = 16;
 
-// RS엔진 초기화 (전체 길이 = 데이터 16 + 패리티 12)
-const rs = new ReedSolomon(DATA_LEN + EC_LEN, EC_LEN);
+export async function Generator(faceBinaryString: string) {
+  try {
+    // 1. 입력 데이터 준비 (Binary String -> Buffer -> Hex String)
+    const w = binaryStringToBuffer(faceBinaryString);
+    const w_hex = w.toString('hex');
 
-export function Generator(faceBinaryString: string) {
-  const w = binaryStringToBuffer(faceBinaryString);
-  const s = Secure_Sketch(w);
+    console.log('[Gen] C++ BCH 모듈 호출 중...');
 
-  const {x_hex, R} = Strong_Randomness_Extractor(w);
+    // 2. Secure Sketch (C++ 네이티브 호출)
+    const s_array = await Secure_Sketch(w_hex);
 
-  const s_hex = s.toString('hex');
-  const P = s_hex + x_hex;
+    console.log('[Gen] 생성된 신드롬:', s_array);
 
-  return {
-    helperData: P,
-    key: R,
-  };
+    // 3. Strong Randomness Extractor (키 R 및 시드 x 생성)
+    const {x_hex, R} = Strong_Randomness_Extractor(w);
+
+    // 4. Helper Data (P) 생성
+    const s_string = JSON.stringify(s_array); // 배열 -> 문자열 변환
+    const P = s_string + '||' + x_hex;
+
+    return {
+      helperData: P,
+      key: R,
+    };
+  } catch (e) {
+    console.error('[Gen] 생성 실패:', e);
+    throw e;
+  }
 }
 
-export function Secure_Sketch(w: Buffer) {
-  const encoded = rs.encode(w);
-  const s = encoded.slice(DATA_LEN);
-
-  return s;
+export async function Secure_Sketch(w_hex: string): Promise<string> {
+  return await BCHModule.generateSyndrome(w_hex);
 }
 
 export function Strong_Randomness_Extractor(w: Buffer) {
