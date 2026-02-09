@@ -11,6 +11,8 @@
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		7FD8C628FDA105303296C171 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
+		908C3D062F33782900F77358 /* BCH.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 908C3D052F33782900F77358 /* BCH.cpp */; };
+		908C3D092F34719700F77358 /* BCHModule.mm in Sources */ = {isa = PBXBuildFile; fileRef = 908C3D082F34719700F77358 /* BCHModule.mm */; };
 		CB31D480E20D973B19CDEA45 /* libPods-visioncamera.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 246D9D32A3ADCF21B403BFDE /* libPods-visioncamera.a */; };
 /* End PBXBuildFile section */
 
@@ -24,6 +26,11 @@
 		76D8782DEABA3546452301AF /* Pods-visioncamera.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-visioncamera.debug.xcconfig"; path = "Target Support Files/Pods-visioncamera/Pods-visioncamera.debug.xcconfig"; sourceTree = "<group>"; };
 		7D5204AF34BE5DF0D022931E /* Pods-visioncamera.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-visioncamera.release.xcconfig"; path = "Target Support Files/Pods-visioncamera/Pods-visioncamera.release.xcconfig"; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = visioncamera/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		908C3D032F33782800F77358 /* visioncamera-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "visioncamera-Bridging-Header.h"; sourceTree = "<group>"; };
+		908C3D042F33782900F77358 /* BCH.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = BCH.hpp; sourceTree = "<group>"; };
+		908C3D052F33782900F77358 /* BCH.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = BCH.cpp; sourceTree = "<group>"; };
+		908C3D072F34719700F77358 /* BCHModule.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BCHModule.h; sourceTree = "<group>"; };
+		908C3D082F34719700F77358 /* BCHModule.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = BCHModule.mm; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
@@ -70,6 +77,7 @@
 		83CBB9F61A601CBA00E9B192 = {
 			isa = PBXGroup;
 			children = (
+				908C3D022F3377B300F77358 /* CPP */,
 				13B07FAE1A68108700A75B9A /* visioncamera */,
 				832341AE1AAA6A7D00B99B32 /* Libraries */,
 				83CBBA001A601CBA00E9B192 /* Products */,
@@ -87,6 +95,18 @@
 				13B07F961A680F5B00A75B9A /* visioncamera.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		908C3D022F3377B300F77358 /* CPP */ = {
+			isa = PBXGroup;
+			children = (
+				908C3D042F33782900F77358 /* BCH.hpp */,
+				908C3D052F33782900F77358 /* BCH.cpp */,
+				908C3D032F33782800F77358 /* visioncamera-Bridging-Header.h */,
+				908C3D072F34719700F77358 /* BCHModule.h */,
+				908C3D082F34719700F77358 /* BCHModule.mm */,
+			);
+			path = CPP;
 			sourceTree = "<group>";
 		};
 		BBD78D7AC51CEA395F1C20DB /* Pods */ = {
@@ -131,7 +151,7 @@
 				LastUpgradeCheck = 1210;
 				TargetAttributes = {
 					13B07F861A680F5B00A75B9A = {
-						LastSwiftMigration = 1120;
+						LastSwiftMigration = 2610;
 					};
 				};
 			};
@@ -246,7 +266,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				908C3D092F34719700F77358 /* BCHModule.mm in Sources */,
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
+				908C3D062F33782900F77358 /* BCH.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -276,6 +298,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
 				PRODUCT_NAME = visioncamera;
+				SWIFT_OBJC_BRIDGING_HEADER = "CPP/visioncamera-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 				VERSIONING_SYSTEM = "apple-generic";
@@ -304,6 +327,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
 				PRODUCT_NAME = visioncamera;
+				SWIFT_OBJC_BRIDGING_HEADER = "CPP/visioncamera-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				VERSIONING_SYSTEM = "apple-generic";
 			};
