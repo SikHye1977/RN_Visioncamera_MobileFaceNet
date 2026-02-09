@@ -225,7 +225,7 @@ export async function Secure_Sketch_Recovery(
 }
 ```
 
-Strong Generator 코드
+Strong Extractor 코드
 
 ```ts
 export function Strong_Extractor(w_hex: string, x_hex: string) {
