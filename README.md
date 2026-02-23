@@ -65,7 +65,7 @@ const {assetExts, sourceExts} = defaultConfig.resolver;
 
 const config = {
   resolver: {
-    // 기존 자산 확장자에 'tflite'를 추가합니다.
+    // 'tflite'를 추가
     assetExts: [...assetExts, 'tflite'],
   },
 };

@@ -21,6 +21,7 @@ import {useTensorflowModel} from 'react-native-fast-tflite';
 import {useResizePlugin} from 'vision-camera-resize-plugin';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useNavigation, useRoute, useIsFocused} from '@react-navigation/native';
+import {useSharedValue} from 'react-native-worklets-core';
 
 // 유틸리티 임포트
 import {Generator} from '../utils/Fuzzy_Extractor/FE_Generator';
@@ -38,6 +39,9 @@ const CameraComponent = () => {
   const device = useCameraDevice('front');
   const {hasPermission, requestPermission} = useCameraPermission();
   const {width: windowWidth, height: windowHeight} = useWindowDimensions();
+
+  // 상태 변수
+  const isFinishedShared = useSharedValue(false);
 
   // TFLite 모델 로드
   const objectDetection = useTensorflowModel(
@@ -76,6 +80,7 @@ const CameraComponent = () => {
   });
 
   const resetScan = useCallback(() => {
+    isFinishedShared.value = false; // 리셋 시 잠금 해제
     setIsCaptured(false);
     setIsProcessing(false);
     setFaceData({
@@ -88,16 +93,15 @@ const CameraComponent = () => {
     });
   }, []);
 
-  // ✨ setTimeout 부분의 이상한 문자를 수정하고 로직을 보강했습니다.
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (isFocused) {
       resetScan();
-      // 페이지 전환 시 카메라 리소스 충돌을 막기 위해 300ms 뒤에 활성화
       timer = setTimeout(() => {
         setIsCameraActive(true);
       }, 300);
     } else {
+      isFinishedShared.value = false;
       setIsCameraActive(false);
       setIsProcessing(false);
     }
@@ -110,9 +114,12 @@ const CameraComponent = () => {
     if (!hasPermission) requestPermission();
   }, [hasPermission]);
 
+  const processingRef = React.useRef(false);
+
   const handleCaptureJS = Worklets.createRunOnJS(
     async (faces: Face[], w: number, h: number, binary: string) => {
-      if (isCaptured || isProcessing) return;
+      if (processingRef.current || isCaptured) return;
+      processingRef.current = true;
       setIsProcessing(true);
 
       try {
@@ -149,6 +156,8 @@ const CameraComponent = () => {
       } catch (e) {
         console.error('FE Process Error:', e);
         Alert.alert('실패', '처리에 실패했습니다.');
+        processingRef.current = false;
+        isFinishedShared.value = false; // 워크렛 잠금 해제
         setIsProcessing(false);
       }
     },
@@ -157,11 +166,12 @@ const CameraComponent = () => {
   const frameProcessor = useFrameProcessor(
     frame => {
       'worklet';
-      if (isCaptured || isProcessing) return;
+      if (isFinishedShared.value) return;
 
       const faces = detectFaces(frame);
 
       if (faces.length > 0 && model != null) {
+        isFinishedShared.value = true;
         const face = faces[0];
         const {x, y, width, height} = face.bounds;
 
@@ -185,11 +195,15 @@ const CameraComponent = () => {
           for (let i = 0; i < embedding.length; i++) {
             binaryStr += embedding[i] >= 0 ? '1' : '0';
           }
+          // 비트스트링 확인용 로그
+          console.log('생성된 비트스트링' + binaryStr);
           handleCaptureJS(faces, frame.width, frame.height, binaryStr);
+        } else {
+          isFinishedShared.value = false;
         }
       }
     },
-    [handleCaptureJS, model, resize, isCaptured, isProcessing],
+    [handleCaptureJS, model, resize, isFinishedShared],
   );
 
   if (!hasPermission)
