@@ -155,7 +155,6 @@ std::vector<unsigned char> BCH::recover(const std::vector<unsigned char>& noisy_
      // --- 비트 확인 로그 추가 ---
     printf("[C++] 복구된 결과 데이터 비트스트링:\n");
     for (size_t i = 0; i < recovered.size(); i++) {
-        // bitset을 사용하여 8비트씩 2진수로 출력
         std::string bits = std::bitset<8>(recovered[i]).to_string();
         printf("%s", bits.c_str());
     }
