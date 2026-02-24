@@ -16,7 +16,7 @@
 
 class BCH{
 public:
-  BCH(int t = 60);
+  BCH(int t = 8);
   
   // calculate syndrome
   std::vector<int> compute_syndrome(const std::vector<unsigned char>& data);

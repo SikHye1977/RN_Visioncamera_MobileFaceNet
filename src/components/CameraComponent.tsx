@@ -5,7 +5,6 @@ import {
   Text,
   useWindowDimensions,
   TouchableOpacity,
-  ScrollView,
   ActivityIndicator,
   Alert,
 } from 'react-native';
@@ -42,80 +41,73 @@ const CameraComponent = () => {
 
   // 상태 변수
   const isFinishedShared = useSharedValue(false);
-
-  // TFLite 모델 로드
-  const objectDetection = useTensorflowModel(
-    require('../assets/MobileFaceNet_new_latest_int8.tflite'),
-  );
-  const model =
-    objectDetection.state === 'loaded' ? objectDetection.model : undefined;
-  const {resize} = useResizePlugin();
-
-  // 상태 관리
   const [isCaptured, setIsCaptured] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isCameraActive, setIsCameraActive] = useState(false); // 카메라 하드웨어 활성화 지연용
+  const [isCameraActive, setIsCameraActive] = useState(false);
+
+  // 인증 결과 상태 추가 ('SUCCESS' | 'FAILURE' | null)
+  const [verificationStatus, setVerificationStatus] = useState<
+    'SUCCESS' | 'FAILURE' | null
+  >(null);
 
   const [faceData, setFaceData] = useState<{
     faces: Face[];
     frameWidth: number;
     frameHeight: number;
-    binaryCode: string;
     helperData: string;
     finalKey: string;
   }>({
     faces: [],
     frameWidth: 0,
     frameHeight: 0,
-    binaryCode: '',
     helperData: '',
     finalKey: '',
   });
 
   const {detectFaces} = useFaceDetector({
     performanceMode: 'fast',
-    contourMode: 'none',
-    landmarkMode: 'none',
     classificationMode: 'none',
   });
 
+  const {resize} = useResizePlugin();
+  const objectDetection = useTensorflowModel(
+    require('../assets/MobileFaceNet_new_latest_int8.tflite'),
+  );
+  const model =
+    objectDetection.state === 'loaded' ? objectDetection.model : undefined;
+
   const resetScan = useCallback(() => {
-    isFinishedShared.value = false; // 리셋 시 잠금 해제
+    isFinishedShared.value = false;
     setIsCaptured(false);
     setIsProcessing(false);
+    setVerificationStatus(null);
     setFaceData({
       faces: [],
       frameWidth: 0,
       frameHeight: 0,
-      binaryCode: '',
       helperData: '',
       finalKey: '',
     });
-  }, []);
+  }, [isFinishedShared]);
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (isFocused) {
       resetScan();
-      timer = setTimeout(() => {
-        setIsCameraActive(true);
-      }, 300);
+      timer = setTimeout(() => setIsCameraActive(true), 300);
     } else {
-      isFinishedShared.value = false;
       setIsCameraActive(false);
-      setIsProcessing(false);
     }
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
+    return () => timer && clearTimeout(timer);
   }, [isFocused, resetScan]);
 
   useEffect(() => {
     if (!hasPermission) requestPermission();
-  }, [hasPermission]);
+  }, [hasPermission, requestPermission]);
 
   const processingRef = React.useRef(false);
 
+  // --- 메인 검증 로직 (JS 실행부) ---
   const handleCaptureJS = Worklets.createRunOnJS(
     async (faces: Face[], w: number, h: number, binary: string) => {
       if (processingRef.current || isCaptured) return;
@@ -124,40 +116,53 @@ const CameraComponent = () => {
 
       try {
         if (mode === 'GENERATE') {
+          // 1. 키 생성 모드
           const result = await Generator(binary);
+          await AsyncStorage.setItem('@helper_data', result.helperData);
+          await AsyncStorage.setItem('@registered_key', result.key);
+
           setFaceData({
             faces,
             frameWidth: w,
             frameHeight: h,
-            binaryCode: binary,
             helperData: result.helperData,
             finalKey: result.key,
           });
-          await AsyncStorage.setItem('@helper_data', result.helperData);
-          await AsyncStorage.setItem('@registered_key', result.key);
         } else {
+          // 2. 키 복구 및 검증 모드
           const savedP = await AsyncStorage.getItem('@helper_data');
-          if (!savedP) {
-            Alert.alert('에러', '등록된 데이터가 없습니다.');
+          const registeredKey = await AsyncStorage.getItem('@registered_key');
+
+          if (!savedP || !registeredKey) {
+            Alert.alert(
+              '에러',
+              '등록된 정보가 없습니다. 먼저 등록을 완료해주세요.',
+            );
             navigation.navigate('Home');
             return;
           }
+
           const recoveredKey = await Reproducer(binary, savedP);
+
+          // 핵심: 원본 키와 복구된 키 대조
+          const isMatch = recoveredKey === registeredKey;
+          setVerificationStatus(isMatch ? 'SUCCESS' : 'FAILURE');
+
           setFaceData({
             faces,
             frameWidth: w,
             frameHeight: h,
-            binaryCode: binary,
             helperData: savedP,
             finalKey: recoveredKey,
           });
         }
         setIsCaptured(true);
       } catch (e) {
-        console.error('FE Process Error:', e);
-        Alert.alert('실패', '처리에 실패했습니다.');
+        console.error('Process Error:', e);
+        Alert.alert('실패', '생체 데이터 처리 중 오류가 발생했습니다.');
+        resetScan();
+      } finally {
         processingRef.current = false;
-        isFinishedShared.value = false; // 워크렛 잠금 해제
         setIsProcessing(false);
       }
     },
@@ -166,11 +171,10 @@ const CameraComponent = () => {
   const frameProcessor = useFrameProcessor(
     frame => {
       'worklet';
-      if (isFinishedShared.value) return;
+      if (isFinishedShared.value || model == null) return;
 
       const faces = detectFaces(frame);
-
-      if (faces.length > 0 && model != null) {
+      if (faces.length > 0) {
         isFinishedShared.value = true;
         const face = faces[0];
         const {x, y, width, height} = face.bounds;
@@ -195,82 +199,33 @@ const CameraComponent = () => {
           for (let i = 0; i < embedding.length; i++) {
             binaryStr += embedding[i] >= 0 ? '1' : '0';
           }
-          // 비트스트링 확인용 로그
-          console.log('생성된 비트스트링' + binaryStr);
           handleCaptureJS(faces, frame.width, frame.height, binaryStr);
         } else {
           isFinishedShared.value = false;
         }
       }
     },
-    [handleCaptureJS, model, resize, isFinishedShared],
+    [handleCaptureJS, model, resize],
   );
-
-  if (!hasPermission)
-    return (
-      <View style={styles.center}>
-        <Text>권한 대기 중...</Text>
-      </View>
-    );
-  if (device == null)
-    return (
-      <View style={styles.center}>
-        <Text>카메라를 찾을 수 없습니다.</Text>
-      </View>
-    );
 
   return (
     <View style={styles.container}>
       <Camera
         style={StyleSheet.absoluteFill}
-        device={device}
+        device={device!}
         isActive={isFocused && isCameraActive && !isCaptured}
         frameProcessor={frameProcessor}
         pixelFormat="yuv"
-        resizeMode="cover"
       />
-
-      {/* 가이드 박스 */}
-      {!isCaptured &&
-        faceData.faces.map((face, index) => {
-          const {bounds} = face;
-          const {frameWidth, frameHeight} = faceData;
-          if (frameWidth === 0 || frameHeight === 0) return null;
-
-          const scale = Math.max(
-            windowWidth / frameHeight,
-            windowHeight / frameWidth,
-          );
-          let finalX =
-            bounds.y * scale - (frameHeight * scale - windowWidth) / 2;
-          let finalY =
-            bounds.x * scale - (frameWidth * scale - windowHeight) / 2;
-
-          if (device.position === 'front')
-            finalX = windowWidth - finalX - bounds.height * scale;
-
-          return (
-            <View
-              key={index}
-              style={[
-                styles.faceBox,
-                {
-                  left: finalX + HORIZONTAL_OFFSET,
-                  top: finalY + VERTICAL_OFFSET,
-                  width: bounds.height * scale,
-                  height: bounds.width * scale,
-                },
-              ]}
-            />
-          );
-        })}
 
       <View style={styles.infoOverlay}>
         <Text style={styles.infoTitle}>
           {isCaptured
             ? mode === 'GENERATE'
-              ? '🔐 생성 완료'
-              : '🔓 복구 완료'
+              ? '🔐 등록 완료'
+              : verificationStatus === 'SUCCESS'
+              ? '✅ 인증 성공'
+              : '❌ 인증 실패'
             : isProcessing
             ? '⚙️ 연산 중...'
             : '👤 얼굴을 인식해주세요'}
@@ -286,16 +241,45 @@ const CameraComponent = () => {
 
         {isCaptured && (
           <View style={{width: '100%', alignItems: 'center'}}>
+            {mode !== 'GENERATE' && (
+              <Text
+                style={[
+                  styles.statusSubText,
+                  {
+                    color:
+                      verificationStatus === 'SUCCESS' ? '#00FF00' : '#FF4444',
+                  },
+                ]}>
+                {verificationStatus === 'SUCCESS'
+                  ? '등록된 사용자와 일치합니다.'
+                  : '일치하지 않는 사용자입니다.'}
+              </Text>
+            )}
+
             <Text style={styles.infoLabel}>Helper Data (P):</Text>
             <View style={styles.resultBox}>
               <Text style={styles.resultValue}>{faceData.helperData}</Text>
             </View>
 
             <Text style={styles.infoLabel}>
-              {mode === 'GENERATE' ? '원본 키 (R):' : '복구된 키 (R):'}
+              {mode === 'GENERATE' ? '등록된 키 (R):' : '복구된 키 (R):'}
             </Text>
-            <View style={[styles.resultBox, {borderColor: '#FFD700'}]}>
-              <Text style={[styles.resultValue, {color: '#FFD700'}]}>
+            <View
+              style={[
+                styles.resultBox,
+                {
+                  borderColor:
+                    verificationStatus === 'FAILURE' ? '#FF4444' : '#FFD700',
+                },
+              ]}>
+              <Text
+                style={[
+                  styles.resultValue,
+                  {
+                    color:
+                      verificationStatus === 'FAILURE' ? '#FF4444' : '#FFD700',
+                  },
+                ]}>
                 {faceData.finalKey}
               </Text>
             </View>
@@ -321,59 +305,56 @@ const CameraComponent = () => {
 
 const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: 'black'},
-  center: {flex: 1, justifyContent: 'center', alignItems: 'center'},
-  faceBox: {
-    position: 'absolute',
-    borderColor: '#00FF00',
-    borderWidth: 3,
-    zIndex: 10,
-  },
   infoOverlay: {
     position: 'absolute',
     bottom: 40,
     left: 20,
     right: 20,
-    backgroundColor: 'rgba(0,0,0,0.85)',
+    backgroundColor: 'rgba(0,0,0,0.9)',
     padding: 20,
-    borderRadius: 16,
+    borderRadius: 20,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#333',
   },
   infoTitle: {
     color: 'white',
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: 'bold',
-    marginBottom: 10,
+    marginBottom: 5,
   },
+  statusSubText: {fontSize: 14, fontWeight: '600', marginBottom: 15},
   infoLabel: {
-    color: '#aaa',
-    fontSize: 12,
+    color: '#888',
+    fontSize: 11,
     marginTop: 10,
     alignSelf: 'flex-start',
+    marginLeft: 5,
   },
   resultBox: {
     width: '100%',
-    padding: 10,
-    backgroundColor: '#222',
-    borderRadius: 8,
+    padding: 12,
+    backgroundColor: '#111',
+    borderRadius: 10,
     marginTop: 5,
     borderWidth: 1,
-    borderColor: '#555',
+    borderColor: '#333',
   },
   resultValue: {
     color: '#fff',
-    fontSize: 11,
+    fontSize: 10,
     textAlign: 'center',
     fontFamily: 'monospace',
   },
   retryButton: {
     backgroundColor: '#2196F3',
-    padding: 12,
-    borderRadius: 8,
+    padding: 15,
+    borderRadius: 12,
     width: '100%',
     alignItems: 'center',
     marginTop: 15,
   },
-  retryText: {color: 'white', fontWeight: 'bold'},
+  retryText: {color: 'white', fontWeight: 'bold', fontSize: 16},
 });
 
 export default CameraComponent;

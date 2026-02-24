@@ -48,7 +48,7 @@ RCT_EXPORT_METHOD(generateSyndrome:(NSString *)hexW
                   reject:(RCTPromiseRejectBlock)reject)
 {
     try {
-        BCH bch(60);
+        BCH bch(8);
         std::vector<unsigned char> w = hexToBytes(hexW);
         std::vector<int> s = bch.compute_syndrome(w);
         
@@ -68,7 +68,7 @@ RCT_EXPORT_METHOD(recover:(NSString *)hexWPrime
                   reject:(RCTPromiseRejectBlock)reject)
 {
     try {
-        BCH bch(60);
+        BCH bch(8);
         std::vector<unsigned char> w_prime = hexToBytes(hexWPrime);
         
         std::vector<int> saved_s;

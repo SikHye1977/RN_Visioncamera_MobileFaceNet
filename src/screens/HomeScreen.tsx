@@ -9,7 +9,7 @@ function HomeScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <TouchableOpacity
-        style={styles.button}
+        style={[styles.button, {backgroundColor: '#2196F3'}]}
         onPress={() => navigation.navigate('Camera', {mode: 'GENERATE'})}>
         <Text style={styles.buttonText}>🔐 생체암호 생성 (등록)</Text>
       </TouchableOpacity>
@@ -37,7 +37,13 @@ const styles = StyleSheet.create({
   },
   title: {fontSize: 28, fontWeight: 'bold', marginBottom: 10},
   subtitle: {fontSize: 16, color: '#666', marginBottom: 30},
-  button: {},
+  button: {
+    padding: 12,
+    borderRadius: 8,
+    width: '60%',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
   buttonText: {},
 });
 
